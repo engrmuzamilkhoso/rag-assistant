@@ -3,42 +3,37 @@ import { embed } from "./embed.js";
 
 type SearchResult = {
   content: string;
+  source: string;
   score: number;
 };
 
 type OllamaChatResponse = {
-  message: {
-    role: string;
-    content: string;
-  };
+  message: { role: string; content: string };
 };
 
-const question = "Why is my merchant payout stuck?";
+const question = "How many API requests can I send per second?";
 
-// ============ STEP 1: RETRIEVE (Postgres finds the best lines) ============
-
-const questionVector = await embed(question); // only the QUESTION is embedded now
+// STEP 1: RETRIEVE
+const questionVector = await embed(question);
 
 const { rows: topResults } = await pool.query<SearchResult>(
-  `SELECT content, 1 - (embedding <=> $1::vector) AS score
+  `SELECT content, source, 1 - (embedding <=> $1::vector) AS score
    FROM documents
    ORDER BY embedding <=> $1::vector
-   LIMIT 2`,
+   LIMIT 3`,
   [JSON.stringify(questionVector)],
 );
 
 console.log(`Question: ${question}\n`);
-console.log("Found these lines:");
+console.log("Found these chunks:");
 for (const r of topResults) {
-  console.log("  ", Number(r.score).toFixed(3), r.content);
+  console.log("  ", Number(r.score).toFixed(3), `[${r.source}]`, r.content);
 }
 
-// ============ STEP 2: AUGMENT (put found lines into the prompt) ============
+// STEP 2: AUGMENT
+const context = topResults.map((r) => `- [${r.source}] ${r.content}`).join("\n");
 
-const context = topResults.map((r) => "- " + r.content).join("\n");
-
-// ============ STEP 3: GENERATE (AI answers) ============
-
+// STEP 3: GENERATE
 const res = await fetch("http://localhost:11434/api/chat", {
   method: "POST",
   headers: { "Content-Type": "application/json" },

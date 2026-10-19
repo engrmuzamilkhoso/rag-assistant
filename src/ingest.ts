@@ -1,29 +1,29 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { pool } from "./db.js";
 import { embed } from "./embed.js";
+import { chunkMarkdown } from "./chunker.js";
 
-const policy = [
-  "Customers can request a refund within 14 days of payment.",
-  "Card refunds take 5 to 7 business days.",
-  "Wallet refunds (JazzCash, Easypaisa) are instant, up to 24 hours.",
-  "Refunds are not allowed during an active chargeback dispute.",
-  "Merchants are settled on the next business day (T+1).",
-  "Settlements are held if the merchant's KYC documents expire.",
-];
+const DOCS_DIR = "docs";
 
-// Clear old data, so running this twice doesn't create duplicates
+const files = readdirSync(DOCS_DIR).filter((f) => f.endsWith(".md"));
+
+const chunks = files.flatMap((file) =>
+  chunkMarkdown(file, readFileSync(join(DOCS_DIR, file), "utf8")),
+);
+
+console.log(`Loaded ${files.length} files → ${chunks.length} chunks\n`);
+
 await pool.query("DELETE FROM documents");
 
-for (const line of policy) {
-  const vector = await embed(line);
-
+for (const chunk of chunks) {
+  const vector = await embed(chunk.text);
   await pool.query(
-    "INSERT INTO documents (content, embedding) VALUES ($1, $2)",
-    [line, JSON.stringify(vector)],
+    "INSERT INTO documents (content, source, embedding) VALUES ($1, $2, $3)",
+    [chunk.text, chunk.source, JSON.stringify(vector)],
   );
-
-  console.log("Saved:", line);
+  console.log(`Saved [${chunk.source}] ${chunk.text.slice(0, 60)}...`);
 }
 
-console.log(`\nDone. ${policy.length} documents saved.`);
-
-await pool.end(); // close the database connection so the script can exit
+console.log("\nDone.");
+await pool.end();
